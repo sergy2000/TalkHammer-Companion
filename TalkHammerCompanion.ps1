@@ -21,7 +21,7 @@ param(
     [string]$GameRoot = "",
     [string]$Player2 = "http://127.0.0.1:4315",
     [string]$GameKey = "talkhammer",
-    [int]$TimeoutSeconds = 60,
+    [int]$TimeoutSeconds = 180,
     [switch]$Once
 )
 
@@ -33,7 +33,7 @@ try { $Host.UI.RawUI.WindowTitle = "TalkHammer Companion - keep open while playi
 
 function Say($text, $colour = "Gray") { Write-Host $text -ForegroundColor $colour }
 function Stamp { Get-Date -Format "HH:mm" }
-function Ok($text)   { Say ("  [ OK ] " + $text) Green }
+function Ok($text) { Say ("  [ OK ] " + $text) Green }
 function Warn($text) { Say ("  [ !! ] " + $text) Yellow }
 function Wait($text) { Say ("  [ .. ] " + $text) Gray }
 
@@ -45,7 +45,8 @@ function Find-GameRoot {
             $p = (Get-ItemProperty -Path $reg -ErrorAction Stop)
             if ($p.SteamPath) { $candidates += $p.SteamPath }
             if ($p.InstallPath) { $candidates += $p.InstallPath }
-        } catch {}
+        }
+        catch {}
     }
     $libraries = @()
     foreach ($steam in $candidates) {
@@ -86,14 +87,17 @@ $http = New-Object System.Net.Http.HttpClient
 $http.Timeout = [TimeSpan]::FromSeconds($TimeoutSeconds)
 $http.DefaultRequestHeaders.Add("player2-game-key", $GameKey)
 
+
+$healthHttp = New-Object System.Net.Http.HttpClient
+$healthHttp.Timeout = [TimeSpan]::FromSeconds(5)
+
 $inflight = @{}      # id -> @{ task; started; tmp; out; kind }
 $beat = 0
 $player2Ok = $false
 $lastHealth = [DateTime]::MinValue
 $served = 0
 
-# The game may have the target file open, which makes the rename fail.
-# Retry for a moment instead of giving up.
+
 function Move-Safe($from, $to) {
     for ($i = 0; $i -lt 20; $i++) {
         try { Move-Item -Force $from $to; return $true } catch { Start-Sleep -Milliseconds 25 }
@@ -101,8 +105,7 @@ function Move-Safe($from, $to) {
     return $false
 }
 
-# Heartbeat for the mod. It's a counter rather than a time, because the game
-# can only tell whether the file changed.
+
 function Write-Beat {
     $script:beat++
     $state = if ($script:player2Ok) { "ok" } else { "player2-down" }
@@ -114,9 +117,10 @@ function Write-Beat {
 
 function Test-Player2 {
     try {
-        $r = $http.GetAsync("$Player2/v1/health").Result
+        $r = $healthHttp.GetAsync("$Player2/v1/health").Result
         $script:player2Ok = $r.IsSuccessStatusCode
-    } catch { $script:player2Ok = $false }
+    }
+    catch { $script:player2Ok = $false }
     $script:lastHealth = Get-Date
 }
 
@@ -161,7 +165,8 @@ function Start-Job-File($jobPath) {
             $body = [IO.File]::ReadAllText($req, [Text.Encoding]::UTF8)
             $content = New-Object System.Net.Http.StringContent($body, [Text.Encoding]::UTF8, "application/json")
             $task = $http.PostAsync($url, $content)
-        } else {
+        }
+        else {
             $task = $http.GetAsync($url)
         }
         $kind = Describe $url
@@ -172,7 +177,8 @@ function Start-Job-File($jobPath) {
             Say ""
         }
         if ($kind -eq "Ruler") { Say ("  " + (Stamp) + "  A ruler is thinking...") DarkGray }
-    } catch {
+    }
+    catch {
         [IO.File]::WriteAllText($tmp, "")
         [void](Move-Safe $tmp $out)
         Say ("  " + (Stamp) + "  A message could not be sent: " + $_.Exception.Message) Yellow
@@ -189,7 +195,8 @@ function Finish-Jobs {
             $resp = $j.task.Result
             $text = $resp.Content.ReadAsStringAsync().Result
             $note = "$([int]$resp.StatusCode)"
-        } catch {
+        }
+        catch {
             $note = "failed: " + $_.Exception.InnerException.Message
             $script:player2Ok = $false
         }
@@ -202,11 +209,14 @@ function Finish-Jobs {
         $ok = $note -match "^2"
         if (-not $ok) {
             Say ("  " + (Stamp) + "  Player2 did not answer (" + $note + "). Is the Player2 app open and signed in?") Yellow
-        } elseif ($j.kind -eq "Ruler") {
+        }
+        elseif ($j.kind -eq "Ruler") {
             Say ("  " + (Stamp) + ("  A ruler replied ({0:N1} s)" -f $secs)) Green
-        } elseif ($j.kind -eq "Voice") {
+        }
+        elseif ($j.kind -eq "Voice") {
             Say ("  " + (Stamp) + "  Voice line spoken") DarkGray
-        } elseif ($j.kind -ne "") {
+        }
+        elseif ($j.kind -ne "") {
             Say ("  " + (Stamp) + "  Request done") DarkGray
         }
         $script:inflight.Remove($id)
