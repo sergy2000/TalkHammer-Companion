@@ -20,7 +20,7 @@
 param(
     [string]$GameRoot = "",
     [string]$Player2 = "http://127.0.0.1:4315",
-    [string]$GameKey = "talkhammer",
+    [string]$GameKey = "01a10cf2-14b2-793c-9abc-d1d2bf9e83b7",
     [int]$TimeoutSeconds = 180,
     [switch]$Once
 )
